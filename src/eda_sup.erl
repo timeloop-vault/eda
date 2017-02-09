@@ -3,7 +3,7 @@
 %% @end
 %%%-------------------------------------------------------------------
 
--module(discord_bot_erl_sup).
+-module(eda_sup).
 
 -behaviour(supervisor).
 

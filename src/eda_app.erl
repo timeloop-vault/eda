@@ -3,7 +3,7 @@
 %% @end
 %%%-------------------------------------------------------------------
 
--module(discord_bot_erl_app).
+-module(eda_app).
 
 -behaviour(application).
 
@@ -15,7 +15,7 @@
 %%====================================================================
 
 start(_StartType, _StartArgs) ->
-    discord_bot_erl_sup:start_link().
+    eda_sup:start_link().
 
 %%--------------------------------------------------------------------
 stop(_State) ->

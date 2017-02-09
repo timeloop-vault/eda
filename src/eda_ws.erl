@@ -6,7 +6,7 @@
 %%% @end
 %%% Created : 08. Feb 2017 19:11
 %%%-------------------------------------------------------------------
--module(discord_bot_erl_ws).
+-module(eda_ws).
 -export([start/0]).
 
 -define(DISCORDGATEWAYURL, "gateway.discord.gg").
@@ -18,9 +18,9 @@
 
 -define(STATE, #{seq_nr => 0}).
 
--include("discord_bot_erl_ws.hrl").
+-include("eda_ws.hrl").
 
-%% discord_bot_erl_ws:start().
+%% eda_ws:start().
 start() ->
   application:ensure_all_started(gun),
   application:start(snowflake),

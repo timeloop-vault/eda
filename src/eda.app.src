@@ -2,7 +2,7 @@
  [{description, "An OTP application"},
   {vsn, "0.1.0"},
   {registered, []},
-  {mod, { discord_bot_erl_app, []}},
+  {mod, {eda_app, []}},
   {applications,
    [kernel,
     stdlib

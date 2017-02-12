@@ -117,7 +117,7 @@ init(#{name := Name, token := Token, opts := Opts}) ->
     %% eda_app:start(a,b),eda_bot:start_link(#{name => mainframe, token => <<"Mjc4OTIzNzgzNjYwNzY1MjA2.C3zfzQ.Ikm_voH_3TRddb2NelL2NN-3YYc">>, opts => #{}}).
     application:ensure_all_started(gun),
     lager:start(),
-    lager:set_loglevel(lager_console_backend, debug),
+    lager:set_loglevel(lager_console_backend, warning),
     BotHeartbeatId = lists:concat([eda_bot_heartbeat, "_", Name]),
     BotHeartbeatChildSpec = #{id => list_to_atom(BotHeartbeatId),
                               start => {eda_bot_heartbeat, start_link, [Name]},

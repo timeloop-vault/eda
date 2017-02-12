@@ -4,13 +4,12 @@
 %%% @doc
 %%%
 %%% @end
-%%% Created : 12. Feb 2017 00:43
+%%% Created : 08. Feb 2017 21:55
 %%%-------------------------------------------------------------------
 -author("Stefan Hagdahl").
 
--define(RestURL, "discordapp.com").
--define(RestPort, 443).
+-define(GatewayURL, "gateway.discord.gg").
+-define(GatewayPort, 443).
 
--define(RestRoot, "/api").
--define(RestCreateMessage(ChannelId),
-    lists:concat([?RestRoot, "/channels/", ChannelId,"/messages"])).
+
+-define(GatewayWSPath, "/?v=6&encoding=json").

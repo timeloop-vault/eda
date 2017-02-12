@@ -26,7 +26,8 @@
          code_change/3]).
 
 %% include
--include("eda_ws.hrl").
+-include("eda_bot.hrl").
+-include("eda_rest.hrl").
 -include("eda_frame.hrl").
 
 -define(SERVER(Name), list_to_atom(lists:concat([?MODULE, "_", Name]))).
@@ -127,11 +128,11 @@ init(#{name := Name, token := Token, opts := Opts}) ->
     %% Echo bot should be started in eda_sup or eda_bot_sup together with
     %% eda_bot_heartbeat
     eda_sup:start_child(BotHeartbeatChildSpec),
-    {ok, GatewayPid} = gun:open(?DISCORDGATEWAYURL, ?DISCORDGATEWAYPORT,
+    {ok, GatewayPid} = gun:open(?GatewayURL, ?GatewayPort,
                                 #{protocols=>[http], trace=>false,
                                   ws_opts=>#{compress=>true}}),
 
-    {ok, RestPid} = gun:open(?DISCORDRESTAPIURL, ?DISCORDRESTAPIPORT,
+    {ok, RestPid} = gun:open(?RestURL, ?RestPort,
                              #{protocols=>[http], trace=>false}),
     consider_tracing(self(), Opts),
     {ok, #state{name=Name, token=Token,
@@ -254,8 +255,8 @@ handle_info({gun_up, GatewayPid, http},
             #state{gateway_pid=GatewayPid, name=Name}=State) ->
     lager:info("[~p]: Upgrading GatewayConnPid(~p) connection to websocket "
                "using Path(~p)",
-               [Name, GatewayPid, ?GATEWAYWSPATH]),
-    gun:ws_upgrade(GatewayPid, ?GATEWAYWSPATH),
+               [Name, GatewayPid, ?GatewayWSPath]),
+    gun:ws_upgrade(GatewayPid, ?GatewayWSPath),
     {noreply, State#state{ws_status=upgrade}};
 handle_info({gun_up, RestPid, _Protocol},
             #state{rest_pid=RestPid, name=Name}=State) ->

@@ -36,5 +36,5 @@
     {RequestMethod :: request_method(), Path :: string(), Body :: iodata()} | {error, Reason :: term()}).
 create_message(ChannelId, Content) ->
     Path = ?RestCreateMessage(ChannelId),
-    Body = #{<<"content">> => list_to_bitstring(Content)},
+    Body = #{<<"content">> => unicode:characters_to_binary(Content)},
     {post, Path, jiffy:encode(Body)}.

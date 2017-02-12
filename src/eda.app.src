@@ -1,15 +1,16 @@
-{application, discord_bot_erl,
+{application, eda,
  [{description, "An OTP application"},
   {vsn, "0.1.0"},
   {registered, []},
   {mod, {eda_app, []}},
   {applications,
    [kernel,
-    stdlib
+    stdlib,
+    gun,
+    lager
    ]},
   {env,[]},
   {modules, []},
-
   {maintainers, []},
   {licenses, []},
   {links, []}

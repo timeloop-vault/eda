@@ -40,7 +40,8 @@
     rest_pid :: pid(),
     %% Indicate if ws is up or not
     ws_status = offline :: online | offline | upgrade,
-    ws_seq_nr = 0 :: integer()
+    ws_seq_nr = 0 :: integer(),
+    rest_api_calls = #{} :: #{StreamRef :: reference() := ReplyPid :: pid()}
 }).
 
 %%%===================================================================
@@ -190,7 +191,7 @@ handle_call({send_frame, #{?FrameOPCode := ?OPCHeartbeat}=Frame}, _From,
 handle_call({send_frame, Frame}, _From,
             #state{gateway_pid=GatewayPid, ws_status=online,
                    name=Name}=State) ->
-    %% TODO: Payload and Frame variable naming should be changes case
+    %% TODO: Payload and Frame variable naming should be changed because
     %% Frame is actually the Discord payload and the payload is the Frame
     Payload = {text, jiffy:encode(Frame)},
     gun:ws_send(GatewayPid, Payload),
@@ -201,25 +202,25 @@ handle_call({send_frame, Frame}, _From,
     lager:error("[~p]: Error sending Frame(~p) as websocket connection is "
                 "~p", [Name, Frame, WSStatus]),
     {reply, {error, "websocket connection is not online"}, State};
-handle_call({rest_api, RequestMethod, Path, Body}, _From,
-            #state{name=Name, token=Token, rest_pid=RestPid}=State) ->
+handle_call({rest_api, RequestMethod, Path, Body}, From,
+            #state{name=Name, token=Token, rest_pid=RestPid,
+                   rest_api_calls=RestApiCalls}=State) ->
     Header = [{<<"content-type">>, "application/json"},
               {<<"Authorization">>,"Bot " ++ bitstring_to_list(Token)}],
-    Reply =
     case RequestMethod of
         post ->
             StreamRef = gun:post(RestPid, Path, Header),
             gun:data(RestPid, StreamRef, fin, Body),
             lager:debug("[~p]: Posted to Path(~p) with Header(~p) Body:~p~n",
                         [Name, Path, Header, Body]),
-            ok;
+            UpdatedRestApiCalls = maps:put(StreamRef, From, RestApiCalls),
+            {noreply, State#state{rest_api_calls=UpdatedRestApiCalls}};
         _ ->
             lager:error("[~p]: Error request method(~p) not supported "
                         "for Path(~p) and Body:~p~n",
                         [Name, RequestMethod, Path, Body]),
-            {error, "request method not supported"}
-    end,
-    {reply, Reply, State};
+            {reply, {error, "request method not supported"}, State}
+    end;
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -293,16 +294,70 @@ handle_info({gun_response, GatewayPid, _, _, Status, Headers},
                 [Name, GatewayPid, Status, Headers]),
     lager:error("[~p]: ws_upgrade failed", [Name]),
     {stop, "failed websocket upgrade", State#state{ws_status=offline}};
+handle_info({gun_response, RestPid, StreamRef, nofin, Status, Headers},
+            #state{name=Name, rest_pid=RestPid,
+                   rest_api_calls=RestApiCalls}=State) ->
+    case maps:find(StreamRef, RestApiCalls) of
+        {ok, From} ->
+            lager:debug("[~p]: Receive response from RestAPI with status(~p) "
+                        "and headers:~p~n", [Name, Status, Headers]),
+            gen_server:reply(From, {rest_info, Status, Headers});
+        error ->
+            lager:error("[~p]: Recieved response from RestAPI with status(~p)"
+                        " and headers:~p~n with unknown caller",
+                        [Name, Status, Headers])
+    end,
+    %% TODO: Update rest_api frame rate and time until reset
+    {noreply, State};
+handle_info({gun_response, RestPid, StreamRef, fin, Status, Headers},
+            #state{name=Name, rest_pid=RestPid,
+                   rest_api_calls=RestApiCalls}=State) ->
+    case maps:find(StreamRef, RestApiCalls) of
+        {ok, From} ->
+            lager:debug("[~p]: Receive response from RestAPI with status(~p) "
+                        "and headers:~p~n", [Name, Status, Headers]),
+            gen_server:reply(From, {rest_info, Status, Headers});
+        error ->
+            lager:error("[~p]: Recieved response from RestAPI with status(~p)"
+                        " and headers:~p~n with unknown caller",
+                        [Name, Status, Headers])
+    end,
+    UpdatedRestApiCalls = maps:remove(StreamRef, RestApiCalls),
+    %% TODO: Update rest_api frame rate and time until reset
+    {noreply, State#state{rest_api_calls=UpdatedRestApiCalls}};
 handle_info({gun_response, _ConnPid, _StreamRef, _IsFin, _Status, _Headers}=Msg,
             #state{name=Name}=State) ->
     lager:warning("[~p]: Unhandled info message(~p)~n"
                   "State:~p~n", [Name, Msg, State]),
     {noreply, State};
 
-handle_info({gun_data, RestPid, StreamRef, fin, _},
-            #state{rest_pid=RestPid}=State) ->
-    gun:cancel(RestPid, StreamRef),
+handle_info({gun_data, RestPid, StreamRef, nofin, Data},
+            #state{name=Name, rest_pid=RestPid,
+                   rest_api_calls=RestApiCalls}=State) ->
+    case maps:find(StreamRef, RestApiCalls) of
+        {ok, From} ->
+            lager:debug("[~p]: Receive data response from RestAPI with data:~p",
+                        [Name, Data]),
+            gen_server:reply(From, {rest_data, Data});
+        error ->
+            lager:error("[~p]: Recieved data response from RestAPI "
+                        "with data(~p)",[Name, Data])
+    end,
     {noreply, State};
+handle_info({gun_data, RestPid, StreamRef, fin, Data},
+            #state{name=Name, rest_pid=RestPid,
+                rest_api_calls=RestApiCalls}=State) ->
+    case maps:find(StreamRef, RestApiCalls) of
+        {ok, From} ->
+            lager:debug("[~p]: Receive data response from RestAPI with data:~p",
+                        [Name, Data]),
+            gen_server:reply(From, {rest_data, Data});
+        error ->
+            lager:error("[~p]: Recieved data response from RestAPI "
+                        "with data(~p)",[Name, Data])
+    end,
+    UpdatedRestApiCalls = maps:remove(StreamRef, RestApiCalls),
+    {noreply, State#state{rest_api_calls=UpdatedRestApiCalls}};
 handle_info({gun_data, _ConnPid, _StreamRef, _IsFin, _Data}=Msg,
             #state{name=Name}=State) ->
     lager:warning("[~p]: Unhandled info message(~p)~n"

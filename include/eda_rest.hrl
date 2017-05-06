@@ -14,3 +14,8 @@
 -define(RestRoot, "/api").
 -define(RestCreateMessage(ChannelId),
     lists:concat([?RestRoot, "/channels/", ChannelId,"/messages"])).
+-define(RestRateLimit, <<"x-ratelimit-limit">>).
+-define(RestRateLimitRemaining, <<"x-ratelimit-remaining">>).
+-define(RestRateLimitReset, <<"x-ratelimit-reset">>).
+-define(RestRateLimitGlobal, <<"x-ratelimit-global">>).
+-define(Epoch0, 62167219200).

@@ -93,7 +93,6 @@
                    ?ENGuildMemberAdd => true,
                    ?ENGuildMemberRemove => true,
                    ?ENGuildMemberUpdate => true,
-                   ?ENGuildMemberRemove => true,
                    ?ENGuildMemberChunk => true,
                    ?ENGuildRoleCreate => true,
                    ?ENGuildRoleUpdate => true,

@@ -40,14 +40,7 @@
     rest_pid :: pid(),
     %% Indicate if ws is up or not
     ws_status = offline :: online | offline | upgrade,
-    ws_seq_nr = 0 :: integer(),
-    rest_api_calls = #{} :: #{StreamRef :: reference() :=
-                              #{reply := {pid(), term()},
-                                path := string()}},
-    rest_rate_limit = #{} :: #{Path :: string() :=
-                               #{limit := integer(),
-                                 remaning := integer(),
-                                 reset := integer()}}
+    ws_seq_nr = 0 :: integer()
 }).
 
 %%%===================================================================
@@ -95,7 +88,7 @@ send_frame(Bot, Frame) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec(rest_api(Bot :: atom(), RequestMethod :: eda_rest:request_method(),
+-spec(rest_api(Bot :: atom(), RequestMethod :: eda_rest_api:http_method(),
                Path :: string(), Body :: <<>>) ->
     ok | {error, Reason :: term()}).
 %%TODO: Change to cast and let requester wait for response
@@ -123,6 +116,8 @@ rest_api(Bot, RequestMethod, Path, Body) ->
 init(#{name := Name, token := Token, opts := Opts}) ->
     %% TODO: Move to sup?
     %% eda_app:start(a,b),eda_bot:start_link(#{name => mainframe, token => <<"Mjc4OTIzNzgzNjYwNzY1MjA2.C3zfzQ.Ikm_voH_3TRddb2NelL2NN-3YYc">>, opts => #{}}).
+    %% {RequestMethod, Path, Body} = eda_rest:create_message(278599392540491787, "testing stuff").
+    %% eda_bot:rest_api(mainframe, RequestMethod, Path, Body).
     application:ensure_all_started(gun),
     lager:start(),
     lager:set_loglevel(lager_console_backend, warning),
@@ -140,12 +135,18 @@ init(#{name := Name, token := Token, opts := Opts}) ->
                                 #{protocols=>[http], trace=>false,
                                   ws_opts=>#{compress=>true}}),
 
-    {ok, RestPid} = gun:open(?RestURL, ?RestPort,
-                             #{protocols=>[http], trace=>false}),
+%%    {ok, RestPid} = gun:open(?RestURL, ?RestPort,
+%%                             #{protocols=>[http], trace=>false}),
+    BotRestId = lists:concat([eda_rest, "_", Name]),
+    BotRestChildSpec = #{id => list_to_atom(BotRestId),
+                              start => {eda_rest, start_link,
+                                        [#{name => Name, token => Token}]},
+                              restart => transient,
+                              shutdown => 2000},
+    eda_sup:start_child(BotRestChildSpec),
     consider_tracing(self(), Opts),
     {ok, #state{name=Name, token=Token,
-                gateway_pid=GatewayPid,
-                rest_pid=RestPid}}.
+                gateway_pid=GatewayPid}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -209,66 +210,68 @@ handle_call({send_frame, Frame}, _From,
     lager:error("[~p]: Error sending Frame(~p) as websocket connection is "
                 "~p", [Name, Frame, WSStatus]),
     {reply, {error, "websocket connection is not online"}, State};
-handle_call({rest_api, HttpMethod, Path, Body}, From,
-            #state{name=Name, token=Token, rest_pid=RestPid,
-                   rest_rate_limit=RestRateLimit,
-                   rest_api_calls=RestApiCalls}=State)
-    when HttpMethod =:= post ->
-    Header = [{<<"content-type">>, "application/json"},
-              {<<"Authorization">>,"Bot " ++ bitstring_to_list(Token)}],
-    %% Rate limit rules:
-    %% https://discordapp.com/developers/docs/topics/rate-limits
-    %% Exception to the rule is deletion of messages which has it's own limit
-    %% (DELETE/channels/{channel.id}/messages/)
-    RateLimited =
-    case check_rate_limit(RestRateLimit, Path) of
-        {false, #{limit := Limit, remaining := Remaining,
-                 reset := Reset}} ->
-            lager:debug("[~p] Rest requests remaining for ~p is ~p out of ~p "
-                        "and will be reset at ~p~n",
-                        [Name, Path, Remaining, Limit,
-                         calendar:gregorian_seconds_to_datetime(Reset)]),
-            false;
-        {true, #{limit := Limit, remaining := Remaining,
-                  reset := Reset}} ->
-            lager:warning("[~p] Rest requests remaining for ~p is ~p out of ~p "
-                          "and will be reset at ~p~n",
-                          [Name, Path, Remaining, Limit,
-                           calendar:gregorian_seconds_to_datetime(Reset)]),
-            Now = calendar:datetime_to_gregorian_seconds(
-                calendar:universal_time()),
-            %% TODO: This will cause a faulty reply in the end as the
-            %% From will no be the gen_server it self or some other process
-            %% that is no the requesting party
-            ResendTime = Reset - Now,
-            if
-                ResendTime > 0 ->
-                    timer:apply_interval(ResendTime * 1000, ?MODULE, rest_api,
-                                         [Name, HttpMethod, Path, Body]);
-                true ->
-                    timer:apply_interval(0, ?MODULE, rest_api,
-                                         [Name, HttpMethod, Path, Body])
-            end,
-            true;
-        false ->
-            lager:debug("[~p] No rate limits found for ~p~n", [Name, Path]),
-            false
-    end,
-    case RateLimited of
-        false ->
-            StreamRef = gun:post(RestPid, Path, Header),
-            gun:data(RestPid, StreamRef, fin, Body),
-            lager:debug("[~p]: Posted to Path(~p) with Header(~p) Body:~p~n",
-                        [Name, Path, Header, Body]),
-            RestApiCall = #{reply => From, path => Path},
-            UpdatedRestApiCalls = maps:put(StreamRef, RestApiCall,
-                                           RestApiCalls),
-            %% TODO: Update rate limit manually until next header has been read
-            %% to ensure consistence
-            {noreply, State#state{rest_api_calls=UpdatedRestApiCalls}};
-        true ->
-            {noreply, State}
-    end;
+%%handle_call({rest_api, HttpMethod, Path, Body}, From,
+%%            #state{name=Name, token=Token, rest_pid=RestPid,
+%%                   rest_rate_limit=RestRateLimit,
+%%                   rest_api_calls=RestApiCalls}=State)
+%%    when HttpMethod =:= post ->
+%%    Header = [{<<"content-type">>, "application/json"},
+%%              {<<"Authorization">>,"Bot " ++ bitstring_to_list(Token)}],
+%%    %% Rate limit rules:
+%%    %% https://discordapp.com/developers/docs/topics/rate-limits
+%%    %% Exception to the rule is deletion of messages which has it's own limit
+%%    %% (DELETE/channels/{channel.id}/messages/)
+%%    RateLimited =
+%%    case check_rate_limit(RestRateLimit, Path) of
+%%        {false, #{limit := Limit, remaining := Remaining,
+%%                 reset := Reset}} ->
+%%            lager:warning("[~p] Rest requests remaining for ~p is ~p out of ~p "
+%%                        "and will be reset at ~p~n",
+%%                        [Name, Path, Remaining, Limit,
+%%                         calendar:gregorian_seconds_to_datetime(Reset)]),
+%%            false;
+%%        {true, #{limit := Limit, remaining := Remaining,
+%%                  reset := Reset}} ->
+%%            lager:warning("[~p] Rest requests remaining for ~p is ~p out of ~p "
+%%                          "and will be reset at ~p~n",
+%%                          [Name, Path, Remaining, Limit,
+%%                           calendar:gregorian_seconds_to_datetime(Reset)]),
+%%            Now = calendar:datetime_to_gregorian_seconds(
+%%                calendar:universal_time()),
+%%            %% TODO: This will cause a faulty reply in the end as the
+%%            %% From will no be the gen_server it self or some other process
+%%            %% that is no the requesting party
+%%            ResendTime = Reset - Now,
+%%            if
+%%                ResendTime > 0 ->
+%%                    timer:apply_interval(ResendTime * 1000, ?MODULE, rest_api,
+%%                                         [Name, HttpMethod, Path, Body]);
+%%                true ->
+%%                    timer:apply_interval(0, ?MODULE, rest_api,
+%%                                         [Name, HttpMethod, Path, Body])
+%%            end,
+%%            true;
+%%        false ->
+%%            lager:debug("[~p] No rate limits found for ~p~n", [Name, Path]),
+%%            false
+%%    end,
+%%    case RateLimited of
+%%        false ->
+%%            StreamRef = gun:post(RestPid, Path, Header),
+%%            gun:data(RestPid, StreamRef, fin, Body),
+%%            lager:debug("[~p]: Posted to Path(~p) with Header(~p) Body:~p~n",
+%%                        [Name, Path, Header, Body]),
+%%            RestApiCall = #{reply => From, path => Path},
+%%            UpdatedRestApiCalls = maps:put(StreamRef, RestApiCall,
+%%                                           RestApiCalls),
+%%            %% TODO: Update rate limit manually until next header has been read
+%%            %% to ensure consistence
+%%            UpdateRestRateLimit = decrease_rate_limit(Path, RestRateLimit, Name),
+%%            {noreply, State#state{rest_api_calls=UpdatedRestApiCalls,
+%%                                  rest_rate_limit=UpdateRestRateLimit}};
+%%        true ->
+%%            {noreply, State}
+%%    end;
 handle_call({rest_api, HttpMethod, Path, Body}, _From,
             #state{name=Name}=State) ->
     lager:error("[~p]: Error request method(~p) not supported "
@@ -313,20 +316,9 @@ handle_info({gun_up, GatewayPid, http},
                [Name, GatewayPid, ?GatewayWSPath]),
     gun:ws_upgrade(GatewayPid, ?GatewayWSPath),
     {noreply, State#state{ws_status=upgrade}};
-handle_info({gun_up, RestPid, _Protocol},
-            #state{rest_pid=RestPid, name=Name}=State) ->
-    lager:debug("[~p]: Connection up for RestPid(~p)",
-                [Name, RestPid]),
-    {noreply, State};
 handle_info({gun_up, _ConnPid, _Protocol}, State)  ->
     {noreply, State};
 
-handle_info({gun_down, RestPid, _Protocol, Reason,
-             _KilledStream, _UnProcessedStreams},
-            #state{rest_pid=RestPid, name=Name}=State) ->
-    lager:warning("[~p]: Connection down for RestPid(~p) Reason:~n~p~n",
-                  [Name, RestPid, Reason]),
-    {noreply, State};
 handle_info({gun_down, _ConnPid, _Protocol, _Reason,
              _KilledStreams, _UnProcessedStreams}=Msg,
             #state{name=Name}=State) ->
@@ -348,77 +340,12 @@ handle_info({gun_response, GatewayPid, _, _, Status, Headers},
                 [Name, GatewayPid, Status, Headers]),
     lager:error("[~p]: ws_upgrade failed", [Name]),
     {stop, "failed websocket upgrade", State#state{ws_status=offline}};
-handle_info({gun_response, RestPid, StreamRef, nofin, Status, Headers},
-            #state{name=Name, rest_pid=RestPid, rest_rate_limit=RestRateLimit,
-                   rest_api_calls=RestApiCalls}=State) ->
-    ParsedHeaders = eda_rest:parse_http_headers(Headers),
-    case maps:find(StreamRef, RestApiCalls) of
-        {ok, #{reply := From, path := Path}} ->
-            lager:debug("[~p]: Receive response from RestAPI with status(~p) "
-                        "and headers:~p~n", [Name, Status, Headers]),
-            gen_server:reply(From, {rest_info, Status, Headers}),
-            UpdatedRestRateLimit = update_rate_limit(Path, ParsedHeaders, RestRateLimit,
-                                                     Name),
-            {noreply, State#state{rest_rate_limit=UpdatedRestRateLimit}};
-        error ->
-            lager:error("[~p]: Recieved response from RestAPI with status(~p)"
-                        " and headers:~p~n with unknown caller",
-                        [Name, Status, Headers]),
-            {noreply, State}
-    end;
-handle_info({gun_response, RestPid, StreamRef, fin, Status, Headers},
-            #state{name=Name, rest_pid=RestPid, rest_rate_limit=RestRateLimit,
-                   rest_api_calls=RestApiCalls}=State) ->
-    ParsedHeaders = eda_rest:parse_http_headers(Headers),
-    case maps:find(StreamRef, RestApiCalls) of
-        {ok, #{reply := From, path := Path}} ->
-            lager:debug("[~p]: Receive response from RestAPI with status(~p) "
-                        "and headers:~p~n", [Name, Status, Headers]),
-            gen_server:reply(From, {rest_info, Status, Headers}),
-            UpdatedRestRateLimit = update_rate_limit(Path, ParsedHeaders, RestRateLimit,
-                                                     Name),
-            UpdatedRestApiCalls = maps:remove(StreamRef, RestApiCalls),
-            {noreply, State#state{rest_api_calls=UpdatedRestApiCalls,
-                                  rest_rate_limit=UpdatedRestRateLimit}};
-        error ->
-            lager:error("[~p]: Recieved response from RestAPI with status(~p)"
-                        " and headers:~p~n with unknown caller",
-                        [Name, Status, Headers]),
-            {noreply, State}
-    end;
 handle_info({gun_response, _ConnPid, _StreamRef, _IsFin, _Status, _Headers}=Msg,
             #state{name=Name}=State) ->
     lager:warning("[~p]: Unhandled info message(~p)~n"
                   "State:~p~n", [Name, Msg, State]),
     {noreply, State};
 
-handle_info({gun_data, RestPid, StreamRef, nofin, Data},
-            #state{name=Name, rest_pid=RestPid,
-                   rest_api_calls=RestApiCalls}=State) ->
-    case maps:find(StreamRef, RestApiCalls) of
-        {ok, #{reply := From}} ->
-            lager:debug("[~p]: Receive data response from RestAPI with data:~p",
-                        [Name, Data]),
-            gen_server:reply(From, {rest_data, Data});
-        error ->
-            lager:error("[~p]: Recieved data response from RestAPI "
-                        "with data(~p)",[Name, Data])
-    end,
-    {noreply, State};
-handle_info({gun_data, RestPid, StreamRef, fin, Data},
-            #state{name=Name, rest_pid=RestPid,
-                rest_api_calls=RestApiCalls}=State) ->
-    case maps:find(StreamRef, RestApiCalls) of
-        {ok, #{reply := From}} ->
-            lager:debug("[~p]: Receive data response from RestAPI with data:~p",
-                        [Name, Data]),
-            gen_server:reply(From, {rest_data, Data});
-        error ->
-            lager:error("[~p]: Recieved data response from RestAPI "
-                        "with data(~p)",[Name, Data])
-    end,
-    UpdatedRestApiCalls = maps:remove(StreamRef, RestApiCalls),
-    {noreply, State#state{rest_api_calls=UpdatedRestApiCalls}};
 handle_info({gun_data, _ConnPid, _StreamRef, _IsFin, _Data}=Msg,
             #state{name=Name}=State) ->
     lager:warning("[~p]: Unhandled info message(~p)~n"
@@ -529,37 +456,3 @@ consider_tracing(Pid, #{trace := true}) ->
     dbg:p(Pid, all);
 consider_tracing(_, _) ->
     ok.
-
-update_rate_limit(Path, #{rate_limit := RateLimit,
-                          rate_limit_remaining := RateLimitRemaining,
-                          rate_limit_reset := RateLimitReset},
-                  RestRateLimit, Name) ->
-    RateLimitInfo = #{Path => #{limit => RateLimit,
-                                remaining => RateLimitRemaining,
-                                reset => RateLimitReset + ?Epoch0}},
-    lager:debug("[~p] RateLimits update for Path(~p)~n:~p~n",
-                [Name, RateLimitInfo]),
-    maps:merge(RateLimitInfo, RestRateLimit);
-update_rate_limit(Path, ParsedHeaders, RestRateLimit, Name) ->
-    lager:warning("[~p]: Headers didn't contain any new rate limits "
-                  "for Path:~p~n"
-                  "ParsedHeaders:~p~n"
-                  "RestRateLimit:~p~n",
-                  [Path, Name, ParsedHeaders, RestRateLimit]),
-    RestRateLimit.
-
-check_rate_limit(RateLimit, Path)
-  when is_map(RateLimit) ->
-    case maps:find(Path, RateLimit) of
-        {ok, #{remaining := Remaining}=RateLimitInfo} ->
-            if
-                Remaining > 0 ->
-                    {false, RateLimitInfo};
-                true ->
-                    {true, RateLimitInfo}
-            end;
-        error ->
-            false
-    end;
-check_rate_limit(_RateLimit, _Path) ->
-    false.

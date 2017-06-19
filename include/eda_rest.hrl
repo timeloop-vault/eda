@@ -19,3 +19,7 @@
 -define(RestRateLimitReset, <<"x-ratelimit-reset">>).
 -define(RestRateLimitGlobal, <<"x-ratelimit-global">>).
 -define(Epoch0, 62167219200).
+-define(DefaultRestRateLimit, 5).
+
+-define(UniqueListStart, 1).
+-define(UniqueListEnd, 50).

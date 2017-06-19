@@ -14,8 +14,7 @@
 %% API
 -export([start_link/1,
          create_identify_message/1,
-         send_frame/2,
-         rest_api/4]).
+         send_frame/2]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -27,7 +26,6 @@
 
 %% include
 -include("eda_bot.hrl").
--include("eda_rest.hrl").
 -include("eda_frame.hrl").
 
 -define(SERVER(Name), list_to_atom(lists:concat([?MODULE, "_", Name]))).
@@ -37,7 +35,6 @@
     token :: string(),
     heartbeat :: integer(), %% milliseconds
     gateway_pid :: pid(),
-    rest_pid :: pid(),
     %% Indicate if ws is up or not
     ws_status = offline :: online | offline | upgrade,
     ws_seq_nr = 0 :: integer()
@@ -82,19 +79,6 @@ create_identify_message(Bot) ->
 send_frame(Bot, Frame) ->
     gen_server:call(?SERVER(Bot), {send_frame, Frame}).
 
-%%--------------------------------------------------------------------
-%% @doc
-%% Do Discord Rest API actions
-%%
-%% @end
-%%--------------------------------------------------------------------
--spec(rest_api(Bot :: atom(), RequestMethod :: eda_rest_api:http_method(),
-               Path :: string(), Body :: <<>>) ->
-    ok | {error, Reason :: term()}).
-%%TODO: Change to cast and let requester wait for response
-rest_api(Bot, RequestMethod, Path, Body) ->
-    gen_server:call(?SERVER(Bot), {rest_api, RequestMethod, Path, Body}, 20000).
-
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -115,9 +99,6 @@ rest_api(Bot, RequestMethod, Path, Body) ->
     {stop, Reason :: term()} | ignore).
 init(#{name := Name, token := Token, opts := Opts}) ->
     %% TODO: Move to sup?
-    %% eda_app:start(a,b),eda_bot:start_link(#{name => mainframe, token => <<"Mjc4OTIzNzgzNjYwNzY1MjA2.C3zfzQ.Ikm_voH_3TRddb2NelL2NN-3YYc">>, opts => #{}}).
-    %% {RequestMethod, Path, Body} = eda_rest:create_message(278599392540491787, "testing stuff").
-    %% eda_bot:rest_api(mainframe, RequestMethod, Path, Body).
     application:ensure_all_started(gun),
     lager:start(),
     lager:set_loglevel(lager_console_backend, warning),
@@ -135,8 +116,6 @@ init(#{name := Name, token := Token, opts := Opts}) ->
                                 #{protocols=>[http], trace=>false,
                                   ws_opts=>#{compress=>true}}),
 
-%%    {ok, RestPid} = gun:open(?RestURL, ?RestPort,
-%%                             #{protocols=>[http], trace=>false}),
     BotRestId = lists:concat([eda_rest, "_", Name]),
     BotRestChildSpec = #{id => list_to_atom(BotRestId),
                               start => {eda_rest, start_link,
@@ -210,74 +189,7 @@ handle_call({send_frame, Frame}, _From,
     lager:error("[~p]: Error sending Frame(~p) as websocket connection is "
                 "~p", [Name, Frame, WSStatus]),
     {reply, {error, "websocket connection is not online"}, State};
-%%handle_call({rest_api, HttpMethod, Path, Body}, From,
-%%            #state{name=Name, token=Token, rest_pid=RestPid,
-%%                   rest_rate_limit=RestRateLimit,
-%%                   rest_api_calls=RestApiCalls}=State)
-%%    when HttpMethod =:= post ->
-%%    Header = [{<<"content-type">>, "application/json"},
-%%              {<<"Authorization">>,"Bot " ++ bitstring_to_list(Token)}],
-%%    %% Rate limit rules:
-%%    %% https://discordapp.com/developers/docs/topics/rate-limits
-%%    %% Exception to the rule is deletion of messages which has it's own limit
-%%    %% (DELETE/channels/{channel.id}/messages/)
-%%    RateLimited =
-%%    case check_rate_limit(RestRateLimit, Path) of
-%%        {false, #{limit := Limit, remaining := Remaining,
-%%                 reset := Reset}} ->
-%%            lager:warning("[~p] Rest requests remaining for ~p is ~p out of ~p "
-%%                        "and will be reset at ~p~n",
-%%                        [Name, Path, Remaining, Limit,
-%%                         calendar:gregorian_seconds_to_datetime(Reset)]),
-%%            false;
-%%        {true, #{limit := Limit, remaining := Remaining,
-%%                  reset := Reset}} ->
-%%            lager:warning("[~p] Rest requests remaining for ~p is ~p out of ~p "
-%%                          "and will be reset at ~p~n",
-%%                          [Name, Path, Remaining, Limit,
-%%                           calendar:gregorian_seconds_to_datetime(Reset)]),
-%%            Now = calendar:datetime_to_gregorian_seconds(
-%%                calendar:universal_time()),
-%%            %% TODO: This will cause a faulty reply in the end as the
-%%            %% From will no be the gen_server it self or some other process
-%%            %% that is no the requesting party
-%%            ResendTime = Reset - Now,
-%%            if
-%%                ResendTime > 0 ->
-%%                    timer:apply_interval(ResendTime * 1000, ?MODULE, rest_api,
-%%                                         [Name, HttpMethod, Path, Body]);
-%%                true ->
-%%                    timer:apply_interval(0, ?MODULE, rest_api,
-%%                                         [Name, HttpMethod, Path, Body])
-%%            end,
-%%            true;
-%%        false ->
-%%            lager:debug("[~p] No rate limits found for ~p~n", [Name, Path]),
-%%            false
-%%    end,
-%%    case RateLimited of
-%%        false ->
-%%            StreamRef = gun:post(RestPid, Path, Header),
-%%            gun:data(RestPid, StreamRef, fin, Body),
-%%            lager:debug("[~p]: Posted to Path(~p) with Header(~p) Body:~p~n",
-%%                        [Name, Path, Header, Body]),
-%%            RestApiCall = #{reply => From, path => Path},
-%%            UpdatedRestApiCalls = maps:put(StreamRef, RestApiCall,
-%%                                           RestApiCalls),
-%%            %% TODO: Update rate limit manually until next header has been read
-%%            %% to ensure consistence
-%%            UpdateRestRateLimit = decrease_rate_limit(Path, RestRateLimit, Name),
-%%            {noreply, State#state{rest_api_calls=UpdatedRestApiCalls,
-%%                                  rest_rate_limit=UpdateRestRateLimit}};
-%%        true ->
-%%            {noreply, State}
-%%    end;
-handle_call({rest_api, HttpMethod, Path, Body}, _From,
-            #state{name=Name}=State) ->
-    lager:error("[~p]: Error request method(~p) not supported "
-                "for Path(~p) and Body:~p~n",
-                [Name, HttpMethod, Path, Body]),
-    {reply, {error, "request method not supported"}, State};
+
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 

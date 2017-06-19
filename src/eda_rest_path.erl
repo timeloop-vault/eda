@@ -39,7 +39,9 @@
     unique_ids = #{} :: #{iteration => integer(),
                           list => list()},
     call_relay = #{} :: #{StreamRef :: reference() :=
-                          #{relay => pid()}}
+                          #{relay => pid(),
+                            ref => integer()}},
+    flush_calls_tref :: timer:tref()
 }).
 
 %%%===================================================================
@@ -135,16 +137,16 @@ init(#{name := Name, path := Path}) ->
 handle_call({rest_call, post, Path, Body}, {Pid, _Tag},
             #state{current_rate=CurrentRate, name=Name,
                    saved_calls=SavedCalls, call_relay=CallRelay,
-                   unique_ids=UniqueIds} = State) ->
+                   unique_ids=UniqueIds}=State) ->
     %% Create unique ref
-    {Ref, UpdatedUniqueIds} = generate_ref(UniqueIds, Path),
+    {Ref, UpdatedUniqueIds} = generate_ref(UniqueIds, Path, Name),
     if
         CurrentRate == 0 ->
             lager:debug("[~p]: Rate limited for Path(~p)~n"
                         "Saving call for resend~n", [Name, Path]),
             Call = #{http_method => post, path => Path, body => Body},
             SavedCall = #{from => Pid, ref => Ref, call => Call},
-            UpdatedSavedCalls = SavedCalls + [SavedCall],
+            UpdatedSavedCalls = SavedCalls ++ [SavedCall],
             {reply, {ok, Ref}, State#state{saved_calls=UpdatedSavedCalls,
                                            unique_ids=UpdatedUniqueIds}};
         true ->
@@ -152,9 +154,11 @@ handle_call({rest_call, post, Path, Body}, {Pid, _Tag},
                         "Path:~p~nHttpMethod:~p~Body:~p~n",
                         [Name, Path, post, Body]),
             {ok, StreamRef} = eda_rest:rest_call(Name, post, Path, Body),
-            UpdateCallRelay = maps:put(StreamRef, #{relay => Pid}, CallRelay),
+            UpdateCallRelay = maps:put(StreamRef, #{relay => Pid, ref => Ref},
+                                       CallRelay),
             {reply, {ok, Ref}, State#state{unique_ids=UpdatedUniqueIds,
-                                           call_relay=UpdateCallRelay}}
+                                           call_relay=UpdateCallRelay,
+                                           current_rate=CurrentRate-1}}
     end;
 handle_call({rest_call, HttpMethod, Path, Message}, From,
             #state{name=Name}=State) ->
@@ -193,32 +197,101 @@ handle_cast(_Request, State) ->
     {noreply, NewState :: #state{}} |
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), NewState :: #state{}}).
-handle_info({rest_info, fin, StreamRef, _Status, _Headers}=Info,
-            #state{call_relay=CallRelay, name=Name}=State) ->
+handle_info({rest_info, fin, StreamRef, _Status, Headers}=Info,
+            #state{call_relay=CallRelay, name=Name, path=Path,
+                   flush_calls_tref=FlushCallsTRef,
+                unique_ids=#{list := UniqueIdList}=UniqueIds}=State) ->
+    {NewRateLimit, NewRateLimitRemaining, NewFlushCallTRef} =
+    update_rate(eda_rest_api:parse_http_headers(Headers),
+                FlushCallsTRef),
+    lager:warning("[~p]: Update rate limit (~p) for ~p",
+                  [Name, NewRateLimitRemaining, ?SERVER(Name, Path)]),
     case maps:take(StreamRef, CallRelay) of
-        {#{relay := From}, UpdateCallRelay} ->
+        {#{relay := From, ref := Ref}, UpdateCallRelay} ->
             lager:debug("[~p]: Relay rest_info:~n~p~nTo:~p~n",
                         [Name, Info, From]),
-            From ! Info,
-            {noreply, State#state{call_relay=UpdateCallRelay}};
+            From ! {rest_relay, Ref, Info},
+            Id = get_id_from_ref(Ref),
+            UpdatedUniqueIdList = UniqueIdList ++ [Id],
+            UpdatedUniqueIds = maps:put(list, UpdatedUniqueIdList, UniqueIds),
+            {noreply, State#state{call_relay=UpdateCallRelay,
+                                  current_rate=NewRateLimitRemaining,
+                                  current_rate_limit=NewRateLimit,
+                                  flush_calls_tref=NewFlushCallTRef,
+                                  unique_ids=UpdatedUniqueIds}};
+        error ->
+            lager:error("[~p]: Rest info received without no relay "
+                        "available:~p~n", [Name, Info]),
+            {noreply, State#state{current_rate=NewRateLimitRemaining,
+                                  current_rate_limit=NewRateLimit,
+                                  flush_calls_tref=NewFlushCallTRef}}
+    end;
+handle_info({rest_info, nofin, StreamRef, _Status, Headers}=Info,
+            #state{call_relay=CallRelay, name=Name, path=Path,
+                   flush_calls_tref=FlushCallsTRef}=State) ->
+    {NewRateLimit, NewRateLimitRemaining, NewFlushCallTRef} =
+    update_rate(eda_rest_api:parse_http_headers(Headers),
+                FlushCallsTRef),
+    lager:warning("[~p]: Update rate limit (~p) for ~p",
+                  [Name, NewRateLimitRemaining, ?SERVER(Name, Path)]),
+    case maps:find(StreamRef, CallRelay) of
+        {ok, #{relay := From, ref := Ref}} ->
+            lager:debug("[~p]: Relay rest_info:~n~p~nTo:~p~n",
+                        [Name, Info, From]),
+            From ! {rest_relay, Ref, Info};
+        error ->
+            lager:error("[~p]: Rest info received without no relay "
+                        "available:~p~n", [Name, Info])
+    end,
+    {noreply, State#state{current_rate=NewRateLimitRemaining,
+                          current_rate_limit=NewRateLimit,
+                          flush_calls_tref=NewFlushCallTRef}};
+
+handle_info({rest_data, fin, StreamRef, _Data}=Info,
+            #state{call_relay=CallRelay, name=Name,
+                unique_ids=#{list := UniqueIdList}=UniqueIds}=State) ->
+    case maps:take(StreamRef, CallRelay) of
+        {#{relay := From, ref := Ref}, UpdateCallRelay} ->
+            lager:debug("[~p]: Relay rest_info:~n~p~nTo:~p~n",
+                        [Name, Info, From]),
+            From ! {rest_relay, Ref, Info},
+            Id = get_id_from_ref(Ref),
+            UpdatedUniqueIdList = UniqueIdList ++ [Id],
+            UpdatedUniqueIds = maps:put(list, UpdatedUniqueIdList, UniqueIds),
+            {noreply, State#state{call_relay=UpdateCallRelay,
+                                  unique_ids=UpdatedUniqueIds}};
         error ->
             lager:error("[~p]: Rest info received without no relay "
                         "available:~p~n", [Name, Info]),
             {noreply, State}
     end;
-handle_info({rest_info, nofin, StreamRef, _Status, _Headers}=Info,
+handle_info({rest_data, nofin, StreamRef, _Data}=Info,
             #state{call_relay=CallRelay, name=Name}=State) ->
     case maps:find(StreamRef, CallRelay) of
-        {ok, #{relay := From}} ->
+        {ok, #{relay := From, ref := Ref}} ->
             lager:debug("[~p]: Relay rest_info:~n~p~nTo:~p~n",
                         [Name, Info, From]),
-            From ! Info;
+            From ! {rest_relay, Ref, Info};
         error ->
             lager:error("[~p]: Rest info received without no relay "
                         "available:~p~n", [Name, Info])
     end,
     {noreply, State};
-handle_info(_Info, State) ->
+
+handle_info({flush_calls}, #state{current_rate_limit=CurrentRateLimit,
+                                  saved_calls=SavedCalls,
+                                  name=Name, path=Path,
+                                  call_relay=CallRelay}=State) ->
+    {UpdatedSavedCalls, UpdatedCallRelay, CurrentRate} =
+    flush_calls(SavedCalls, CurrentRateLimit, CallRelay, Name),
+    lager:warning("[~p]: Rate (~p) after flush for ~p~n",
+                  [Name, CurrentRate, ?SERVER(Name, Path)]),
+    {noreply, State#state{saved_calls=UpdatedSavedCalls,
+                          call_relay=UpdatedCallRelay,
+                          current_rate=CurrentRate,
+                          flush_calls_tref=undefined}};
+handle_info(Info, #state{name=Name}=State) ->
+    lager:warning("[~p]: Unsupported info received:~p~n", [Name, Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -282,11 +355,49 @@ unique_ids(Iteration) ->
     To = ?UniqueListEnd + (?UniqueListEnd * Iteration),
     lists:seq(From, To).
 
-generate_ref(#{iteration := Iteration, list := []}, Path) ->
+generate_ref(#{iteration := Iteration, list := []}, Path, BotName) ->
     UpdatedIteration = Iteration + 1,
     UniqueIdsList = unique_ids(Iteration),
-    generate_ref(#{iteration => UpdatedIteration, list => UniqueIdsList}, Path);
-generate_ref(#{list := [UniqueId|UniqueIdsRest]}=UniqueIds, Path) ->
-    Ref = list_to_atom(lists:concat([Path, "_", UniqueId])),
+    generate_ref(#{iteration => UpdatedIteration, list => UniqueIdsList},
+                 Path, BotName);
+generate_ref(#{list := [UniqueId|UniqueIdsRest]}=UniqueIds, Path, BotName) ->
+    Ref = list_to_atom(lists:concat([Path, "_", BotName, "_", UniqueId])),
     UpdatedUniqueIds = maps:put(list, UniqueIdsRest, UniqueIds),
     {Ref, UpdatedUniqueIds}.
+
+get_id_from_ref(Ref) ->
+    RefTokens = string:tokens(atom_to_list(Ref), "_"),
+    list_to_integer(lists:last(RefTokens)).
+
+update_rate(#{rate_limit := RateLimit,
+              rate_limit_remaining := RateLimitRemaining,
+              rate_limit_reset := RateLimitReset}, undefined) ->
+    Now = calendar:datetime_to_gregorian_seconds(
+        calendar:universal_time()) - ?Epoch0,
+    lager:warning("[]: Reset timers:~nReset:~p~nNow:~p~n",
+                  [RateLimitReset, Now]),
+    ResetTime =
+    if
+        (RateLimitReset - Now) < 0 ->
+            0;
+        true ->
+            RateLimitReset - Now
+    end,
+    {ok, TRef} = timer:send_after(ResetTime * 1000, {flush_calls}),
+    {RateLimit, RateLimitRemaining, TRef};
+update_rate(#{rate_limit := RateLimit,
+              rate_limit_remaining := RateLimitRemaining,
+              rate_limit_reset := _RateLimitReset}, RateLimitResetTRef) ->
+    {RateLimit, RateLimitRemaining, RateLimitResetTRef}.
+
+flush_calls(SavedCalls, 0, CallRelay, _Name) ->
+    {SavedCalls, CallRelay, 0};
+flush_calls([], CurrentRate, CallRelay, _Name) ->
+    {[], CallRelay, CurrentRate};
+flush_calls([SavedCall|Rest], CurrentRate, CallRelay, Name) ->
+    #{from := Pid, ref := Ref, call := Call} = SavedCall,
+    #{http_method := post, path := Path, body :=Body} = Call,
+    {ok, StreamRef} = eda_rest:rest_call(Name, post, Path, Body),
+    UpdateCallRelay = maps:put(StreamRef, #{relay => Pid, ref => Ref},
+                               CallRelay),
+    flush_calls(Rest, CurrentRate - 1, UpdateCallRelay, Name).

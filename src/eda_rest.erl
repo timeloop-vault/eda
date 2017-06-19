@@ -56,8 +56,8 @@ start_link(Args) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec(rest_call(Name :: atom(), HttpMethod :: eda_rest_api:http_method(), Path :: string(),
-                Body :: iodata()) -> term()).
+-spec(rest_call(Name :: atom(), HttpMethod :: eda_rest_api:http_method(),
+                Path :: string(), Body :: iodata()) -> term()).
 rest_call(Name, HttpMethod, Path, Body) ->
     gen_server:call(?SERVER(Name), {rest_call, HttpMethod, Path, Body}, 5000).
 

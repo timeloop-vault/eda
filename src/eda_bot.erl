@@ -64,7 +64,7 @@ start_link(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec(create_identify_message(Bot :: atom()) ->
-    {ok, Frame :: eda_frame:frame()} | {error, Reason :: term()}).
+    {ok, Frame :: eda_frame_api:frame()} | {error, Reason :: term()}).
 create_identify_message(Bot) ->
     gen_server:call(?SERVER(Bot), {create_identify_message}).
 
@@ -74,7 +74,7 @@ create_identify_message(Bot) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec(send_frame(Bot :: atom(), Frame :: eda_frame:frame()) ->
+-spec(send_frame(Bot :: atom(), Frame :: eda_frame_api:frame()) ->
     ok | {error, Reason :: term()}).
 send_frame(Bot, Frame) ->
     gen_server:call(?SERVER(Bot), {send_frame, Frame}).
@@ -161,7 +161,7 @@ handle_call({create_identify_message}, _From, #state{token=Token}=State) ->
                  <<"properties">> => Properties,
                  <<"compress">> => false,
                  <<"large_threshold">> => 250},
-    case eda_frame:build_frame(?OPCIdentify, Identify) of
+    case eda_frame_api:build_frame(?OPCIdentify, Identify) of
         {error, Reason} ->
             {reply, {error, Reason}, State};
         Frame ->
@@ -297,19 +297,19 @@ handle_info({gun_ws, GatewayPid, {text, JsonFrame}},
         #{?FrameSequenceNumber := null}=Frame ->
             lager:debug("[~p]: Frame received from GatewayPid(~p):~n~p~n",
                         [Name, GatewayPid, Frame]),
-            EdaFrame = eda_frame:build_eda_frame(Name, Frame),
+            EdaFrame = eda_frame_api:build_eda_frame(Name, Frame),
             eda_frame_router:publish_frame(EdaFrame),
             {noreply, State};
         #{?FrameSequenceNumber := SequenceNumber}=Frame ->
             lager:debug("[~p]: Frame received from GatewayPid(~p):~n~p~n",
                         [Name, GatewayPid, Frame]),
-            EdaFrame = eda_frame:build_eda_frame(Name, Frame),
+            EdaFrame = eda_frame_api:build_eda_frame(Name, Frame),
             eda_frame_router:publish_frame(EdaFrame),
             {noreply, State#state{ws_seq_nr=SequenceNumber}};
         Frame when is_map(Frame) ->
             lager:debug("[~p]: Frame received from GatewayPid(~p):~n~p~n",
                         [Name, GatewayPid, Frame]),
-            EdaFrame = eda_frame:build_eda_frame(Name, Frame),
+            EdaFrame = eda_frame_api:build_eda_frame(Name, Frame),
             eda_frame_router:publish_frame(EdaFrame),
             {noreply, State};
         Frame ->

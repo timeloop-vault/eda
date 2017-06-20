@@ -83,11 +83,11 @@ trigger_heartbeat(Name) ->
     {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term()} | ignore).
 init([Bot, Name]) ->
-    HeartbeatACKFrameSpec = eda_frame:build_frame_spec(?OPCHeartbeatACK,'_'),
-    HelloFrameSpec = eda_frame:build_frame_spec(?OPCHello, '_'),
-    HelloEdaFrameSpec = eda_frame:build_eda_frame(Bot, HelloFrameSpec),
+    HeartbeatACKFrameSpec = eda_frame_api:build_frame_spec(?OPCHeartbeatACK, '_'),
+    HelloFrameSpec = eda_frame_api:build_frame_spec(?OPCHello, '_'),
+    HelloEdaFrameSpec = eda_frame_api:build_eda_frame(Bot, HelloFrameSpec),
     HeartbeatACKEdaFrameSpec =
-    eda_frame:build_eda_frame(Bot, HeartbeatACKFrameSpec),
+    eda_frame_api:build_eda_frame(Bot, HeartbeatACKFrameSpec),
     case init_subscriptions([HeartbeatACKEdaFrameSpec, HelloEdaFrameSpec]) of
         {error, Reason} ->
             {stop, Reason};
@@ -235,7 +235,7 @@ code_change(_OldVsn, State, _Extra) ->
 init_subscriptions([]) ->
     ok;
 init_subscriptions([FrameSpec|Rest]) ->
-    case eda_frame_router:subscribe(FrameSpec) of
+    case eda_frame_api:subscribe(FrameSpec) of
         ok ->
             init_subscriptions(Rest);
         Error ->

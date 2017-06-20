@@ -1,5 +1,4 @@
 %%%-------------------------------------------------------------------
-%%% @author Stefan Hagdahl
 %%% @copyright (C) 2017, <COMPANY>
 %%% @doc
 %%% Library to match Frame towards FrameSpec matches from subscriptions
@@ -7,13 +6,16 @@
 %%% @end
 %%% Created : 10. Feb 2017 14:04
 %%%-------------------------------------------------------------------
--module(eda_frame).
--author("Stefan Hagdahl").
+-module(eda_frame_api).
 
 -include("eda_frame.hrl").
 
 %% API
--export([match/2,
+-export([subscribe/1,
+         subscribe/2,
+         unsubscribe/1,
+         unsubscribe/2,
+         match/2,
          build_frame_spec/2,
          build_frame_spec/4,
          build_eda_frame/2,
@@ -63,6 +65,40 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Subscribe EdaFrameSpec for Process
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec(subscribe(EdaFrameSpec :: eda_frame_api:eda_frame()) ->
+    ok | {error, Reason :: term()}).
+subscribe(EdaFrameSpec) ->
+    subscribe(EdaFrameSpec, self()).
+
+-spec(subscribe(EdaFrameSpec :: eda_frame_api:eda_frame(), Pid :: pid()) ->
+    ok | {error, Reason :: term()}).
+subscribe(EdaFrameSpec, Pid) when is_map(EdaFrameSpec), is_pid(Pid) ->
+    eda_frame_router:subscribe(EdaFrameSpec, Pid).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Unsubscribe FrameSpec for Process
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec(unsubscribe(EdaFrameSpec :: eda_frame_api:eda_frame()) ->
+    ok | {error, Reason :: term()}).
+unsubscribe(EdaFrameSpec)
+    when is_map(EdaFrameSpec) ->
+    unsubscribe(EdaFrameSpec, self()).
+
+-spec(unsubscribe(EdaFrameSpec :: eda_frame_api:eda_frame(), Pid :: pid()) ->
+    ok | {error, Reason :: term()}).
+unsubscribe(EdaFrameSpec, Pid)
+    when is_map(EdaFrameSpec), is_pid(Pid) ->
+    eda_frame_router:unsubscribe(EdaFrameSpec, Pid).
 
 %%--------------------------------------------------------------------
 %% @doc

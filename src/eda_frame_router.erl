@@ -30,7 +30,8 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {
-    subscriptions = #{} :: #{eda_frame:eda_frame() => PidList :: list(pid())}
+    subscriptions = #{} :: #{eda_frame_api:eda_frame() =>
+                             PidList :: list(pid())}
 }).
 
 %%%===================================================================
@@ -56,7 +57,7 @@ start_link() ->
 %%--------------------------------------------------------------------
 %% TODO: Add "FROM Bot" to message so that receiving end knows which
 %% end-point bot to use for sending data
--spec(publish_frame(EdaFrame :: eda_frame:eda_frame()) -> ok).
+-spec(publish_frame(EdaFrame :: eda_frame_api:eda_frame()) -> ok).
 publish_frame(EdaFrame) ->
     gen_server:cast(?SERVER, {publish_frame, EdaFrame}).
 
@@ -66,12 +67,12 @@ publish_frame(EdaFrame) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec(subscribe(EdaFrameSpec :: eda_frame:eda_frame()) ->
+-spec(subscribe(EdaFrameSpec :: eda_frame_api:eda_frame()) ->
     ok | {error, Reason :: term()}).
 subscribe(EdaFrameSpec) ->
     subscribe(EdaFrameSpec, self()).
 
--spec(subscribe(EdaFrameSpec :: eda_frame:eda_frame(), Pid :: pid()) ->
+-spec(subscribe(EdaFrameSpec :: eda_frame_api:eda_frame(), Pid :: pid()) ->
     ok | {error, Reason :: term()}).
 subscribe(EdaFrameSpec, Pid) when is_map(EdaFrameSpec), is_pid(Pid) ->
     gen_server:call(?SERVER, {subscribe, EdaFrameSpec, Pid}).
@@ -82,13 +83,13 @@ subscribe(EdaFrameSpec, Pid) when is_map(EdaFrameSpec), is_pid(Pid) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec(unsubscribe(EdaFrameSpec :: eda_frame:eda_frame()) ->
+-spec(unsubscribe(EdaFrameSpec :: eda_frame_api:eda_frame()) ->
     ok | {error, Reason :: term()}).
 unsubscribe(EdaFrameSpec)
     when is_map(EdaFrameSpec) ->
     unsubscribe(EdaFrameSpec, self()).
 
--spec(unsubscribe(EdaFrameSpec :: eda_frame:eda_frame(), Pid :: pid()) ->
+-spec(unsubscribe(EdaFrameSpec :: eda_frame_api:eda_frame(), Pid :: pid()) ->
     ok | {error, Reason :: term()}).
 unsubscribe(EdaFrameSpec, Pid)
 when is_map(EdaFrameSpec), is_pid(Pid) ->
@@ -125,10 +126,12 @@ init([]) ->
 -spec(handle_call(Request :: term(), From :: {pid(), Tag :: term()},
                   State :: #state{}) ->
                      {reply, Reply :: term(), NewState :: #state{}} |
-                     {reply, Reply :: term(), NewState :: #state{}, timeout() | hibernate} |
+                     {reply, Reply :: term(), NewState :: #state{},
+                      timeout() | hibernate} |
                      {noreply, NewState :: #state{}} |
                      {noreply, NewState :: #state{}, timeout() | hibernate} |
-                     {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
+                     {stop, Reason :: term(), Reply :: term(),
+                      NewState :: #state{}} |
                      {stop, Reason :: term(), NewState :: #state{}}).
 handle_call({subscribe, #{frame := _}=EdaFrameSpec, Pid}, _From,
             #state{subscriptions=Subscriptions}=State)
@@ -192,7 +195,7 @@ handle_cast({publish_frame, #{bot := _Bot, frame := _Frame} = EdaFrame},
     lists:foreach(
         fun({EdaFrameSpec, PidList})
                when is_map(EdaFrameSpec), is_list(PidList) ->
-            case eda_frame:match(EdaFrame, EdaFrameSpec) of
+            case eda_frame_api:match(EdaFrame, EdaFrameSpec) of
                 true ->
                     send_notifications({frame, EdaFrame}, PidList);
                 false ->

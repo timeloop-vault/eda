@@ -21,7 +21,7 @@
          terminate/2,
          code_change/3]).
 
--include("eda_rest.hrl").
+-include_lib("eda_plugin_api/include/eda_rest.hrl").
 
 -define(SERVER(Name, Path),
     list_to_atom(lists:concat([?MODULE, "_", Name, "_", Path]))).

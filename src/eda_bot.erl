@@ -26,7 +26,7 @@
 
 %% include
 -include("eda_bot.hrl").
--include("eda_frame.hrl").
+-include_lib("eda_plugin_api/include/eda_frame.hrl").
 
 -define(SERVER(Name), list_to_atom(lists:concat([?MODULE, "_", Name]))).
 

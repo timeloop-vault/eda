@@ -12,7 +12,7 @@
 
 -behaviour(gen_server).
 
--include("eda_frame.hrl").
+-include_lib("eda_plugin_api/include/eda_frame.hrl").
 
 %% API
 -export([start_link/1,
